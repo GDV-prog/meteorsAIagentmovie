@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Env / secrets
+.env
+
+# Data / local Qdrant db / рантайм-логи
+data/db/
+data/*.csv
+data/*.log
+data/*.out
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
