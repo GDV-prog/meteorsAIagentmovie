@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import os
-import sys
 import uuid
 
 import streamlit as st
@@ -28,12 +27,18 @@ st.set_page_config(page_title="Find My Movie", page_icon="🎬", layout="wide")
 
 if not os.getenv("LLM_API_KEY"):
     st.error("Не задан LLM_API_KEY в .env — без него голова не отвечает.")
-    sys.exit(1)
+    st.stop()
 
 import agent  # noqa: E402  (после проверки ключа: импорт тянет модели)
 
 NEW_TITLE = "Новый чат"
 ASSISTANT_AVATAR = "🎬"
+EXAMPLES = [
+    "Что-то напряжённое про выживание в космосе",
+    "Добрая комедия на вечер",
+    "Похожее на «Интерстеллар»",
+    "Атмосферный детектив с неожиданным финалом",
+]
 
 
 @st.cache_resource(show_spinner="Прогреваю эмбеддер и базу…")
@@ -49,6 +54,27 @@ def _warmup() -> bool:
     except Exception as e:  # прогрев не критичен — просто будет первый запрос медленнее
         print(f"Прогрев пропущен: {e}", flush=True)
     return True
+
+
+@st.cache_data(show_spinner=False)
+def _db_count() -> int | None:
+    """Сколько фильмов в базе (для статуса в сайдбаре). None — если база недоступна."""
+    try:
+        from embeddings import COLLECTION
+        from tools import _client
+
+        return _client().count(COLLECTION).count
+    except Exception:
+        return None
+
+
+def _chat_to_md(chat: dict) -> str:
+    """Диалог → Markdown для экспорта (кнопка «Скачать»)."""
+    lines = [f"# {chat['title']}\n"]
+    for m in chat["history"]:
+        who = "🎬 Find My Movie" if m["role"] == "assistant" else "Вы"
+        lines.append(f"**{who}:**\n\n{m['content']}\n")
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------- работа с чатами -
@@ -95,6 +121,26 @@ def _delete(cid: str) -> None:
         st.session_state.active = st.session_state.chats[-1]["id"]
 
 
+def _clear_active() -> None:
+    """Очистить активный чат: сбросить память Session и историю сообщений."""
+    c = _active()
+    c["session"].clear()
+    c["history"] = []
+    c["title"] = NEW_TITLE
+
+
+def _submit(text: str) -> None:
+    """Положить запрос пользователя в активный чат. Ответ сгенерируется
+    отдельным проходом (см. ниже), поэтому здесь — только добавляем ход."""
+    text = text.strip()
+    if not text:
+        return
+    c = _active()
+    if c["title"] == NEW_TITLE:
+        c["title"] = text[:30] + ("…" if len(text) > 30 else "")
+    c["history"].append({"role": "user", "content": text})
+
+
 # ------------------------------------------------------------------ интерфейс --
 _warmup()
 _ensure_state()
@@ -102,6 +148,7 @@ _ensure_state()
 with st.sidebar:
     st.markdown("## 🎬 Find My Movie")
     st.button("➕ Новый чат", use_container_width=True, type="primary", on_click=_new_chat)
+    st.button("🧹 Очистить чат", use_container_width=True, on_click=_clear_active)
     st.divider()
 
     # список чатов: активный подсвечен, рядом — кнопка удаления
@@ -119,33 +166,63 @@ with st.sidebar:
         dele.button("🗑", key=f"del_{c['id']}", on_click=_delete, args=(c["id"],))
 
     st.divider()
-    st.caption("Подбор по настроению, детали и похожее — из базы ~8000 фильмов.")
+
+    # экспорт активного диалога
+    _cur = _active()
+    st.download_button(
+        "⬇️ Скачать диалог (.md)",
+        data=_chat_to_md(_cur),
+        file_name=f"{_cur['title']}.md",
+        mime="text/markdown",
+        use_container_width=True,
+        disabled=not _cur["history"],
+    )
+
+    with st.expander("❓ Как спрашивать"):
+        st.markdown(
+            "- **По настроению:** «что-то напряжённое про космос»\n"
+            "- **По похожести:** «как „Интерстеллар“»\n"
+            "- **По деталям:** сюжет, год, режиссёр, актёры\n"
+            "- Можно уточнять прямо в диалоге — чат помнит контекст."
+        )
+
+    # статус: база, web-поиск, модель
+    _cnt = _db_count()
+    _db = f"{_cnt:,} фильмов".replace(",", " ") if _cnt else "недоступна ⚠️"
+    _web = "вкл ✅" if os.getenv("TAVILY_API_KEY") else "выкл"
+    _model = agent.LLM_MODEL.split("/")[-1]
+    st.caption(f"📀 База: {_db}\n\n🌐 Web-поиск: {_web}\n\n🧠 Модель: {_model}")
 
 # --- центр: активный чат ---
 chat = _active()
 
+# приветственный экран на пустом чате — примеры-подсказки
+if not chat["history"]:
+    st.markdown("#### С чего начнём? 🎬")
+    st.caption("Опишите настроение или назовите похожий фильм — или выберите пример:")
+    cols = st.columns(2)
+    for i, ex in enumerate(EXAMPLES):
+        if cols[i % 2].button(ex, key=f"ex_{i}", use_container_width=True):
+            _submit(ex)
+            st.rerun()
+
+# история (единственный проход рендера завершённых сообщений — без двойной отрисовки)
 for m in chat["history"]:
     avatar = ASSISTANT_AVATAR if m["role"] == "assistant" else None
     with st.chat_message(m["role"], avatar=avatar):
         st.markdown(m["content"])
 
-if prompt := st.chat_input("Например: что-то напряжённое про выживание в космосе…"):
-    prompt = prompt.strip()
-    if chat["title"] == NEW_TITLE:
-        chat["title"] = prompt[:30] + ("…" if len(prompt) > 30 else "")
-
-    chat["history"].append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
+# нужен ли ответ на последний ход пользователя
+if chat["history"] and chat["history"][-1]["role"] == "user":
     with st.chat_message("assistant", avatar=ASSISTANT_AVATAR):
         with st.spinner("Подбираю…"):
             try:
-                reply = chat["session"].respond(prompt)
+                reply = chat["session"].respond(chat["history"][-1]["content"])
             except Exception as e:  # не валим интерфейс на ошибке модели/сети
                 reply = f"⚠️ Ошибка: {e}"
         st.markdown(reply)
-
     chat["history"].append({"role": "assistant", "content": reply})
-    # подсветка нового заголовка в сайдбаре подхватится на следующем ране
+
+if prompt := st.chat_input("Например: что-то напряжённое про выживание в космосе…"):
+    _submit(prompt)
     st.rerun()
