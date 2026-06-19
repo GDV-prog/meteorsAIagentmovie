@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from langchain_classic.agents import AgentExecutor, create_tool_calling_agent
@@ -28,12 +29,13 @@ from tools import ALL_TOOLS
 
 load_dotenv()
 
-GROQ_BASE_URL = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
-ROUTER_MODEL = os.getenv("ROUTER_MODEL", "llama-3.1-8b-instant")
-# gpt-oss: low/medium/high. low = меньше "размышлений" -> быстрее и дешевле по токенам.
-REASONING_EFFORT = os.getenv("REASONING_EFFORT", "low")
+# Провайдер — OpenAI-совместимый шлюз Polza.ai (доступ к 400+ моделям по одному ключу).
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://polza.ai/api/v1")
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+LLM_MODEL = os.getenv("LLM_MODEL", "deepseek/deepseek-v4-flash")
+ROUTER_MODEL = os.getenv("ROUTER_MODEL", "deepseek/deepseek-v4-flash")
+# Только для gpt-oss-моделей (low/medium/high). Для прочих моделей оставь пустым.
+REASONING_EFFORT = os.getenv("REASONING_EFFORT", "")
 
 SYSTEM = (
     "Ты — MovieAI, дружелюбный консультант по фильмам в Telegram. Отвечай по-русски, "
@@ -82,15 +84,15 @@ def _llm(model: str, temperature: float, reasoning_effort: str | None = None) ->
     extra = {"model_kwargs": {"reasoning_effort": reasoning_effort}} if reasoning_effort else {}
     return ChatOpenAI(
         model=model,
-        base_url=GROQ_BASE_URL,
-        api_key=GROQ_API_KEY,
+        base_url=LLM_BASE_URL,
+        api_key=LLM_API_KEY,
         temperature=temperature,
         **extra,
     )
 
 
-# голова — с пониженным reasoning_effort (быстрее); роутер (llama) этот параметр не поддерживает
-llm = _llm(LLM_MODEL, 0.3, reasoning_effort=REASONING_EFFORT)
+# голова — reasoning_effort применяется, только если задан (для gpt-oss); deepseek его не требует
+llm = _llm(LLM_MODEL, 0.3, reasoning_effort=REASONING_EFFORT or None)
 router_llm = _llm(ROUTER_MODEL, 0.0)
 
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
@@ -145,9 +147,23 @@ def _new_executor(mem: ConversationBufferMemory) -> AgentExecutor:
         memory=mem,
         verbose=False,
         handle_parsing_errors=True,
-        max_iterations=5,
+        max_iterations=7,
         return_intermediate_steps=True,
     )
+
+
+_MD_MARKS = re.compile(r"\*{1,2}|_{2}")
+
+
+def _clean(text: str) -> str:
+    """Срезаем markdown — Telegram его не рендерит, а модель порой добавляет.
+    Убираем жирный/курсив (*, **, __), заголовки (#) и инлайн-код (`).
+    Эмодзи, переносы строк и обычный текст не трогаем.
+    """
+    text = _MD_MARKS.sub("", text)
+    text = text.replace("`", "")
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)  # markdown-заголовки строк
+    return text
 
 
 def _history_text(mem: ConversationBufferMemory, last: int = 4) -> str:
@@ -175,7 +191,7 @@ def _respond_with(user_input: str, mem: ConversationBufferMemory, executor: Agen
         _log.info("ветка=smalltalk инструменты: (нет)")
         history = mem.load_memory_variables({})["chat_history"]
         msgs = [SystemMessage(content=SMALLTALK_SYSTEM), *history, HumanMessage(content=user_input)]
-        reply = llm.invoke(msgs).content
+        reply = _clean(str(llm.invoke(msgs).content))
         mem.save_context({"input": user_input}, {"output": reply})
         return reply
     result = executor.invoke({"input": user_input})
@@ -188,7 +204,7 @@ def _respond_with(user_input: str, mem: ConversationBufferMemory, executor: Agen
             "Кажется, я перемудрил с поиском 😅 Попробуй сформулировать чуть проще — "
             "например, без жёстких условий по рейтингу, и я подберу варианты."
         )
-    return output
+    return _clean(output)
 
 
 class Session:

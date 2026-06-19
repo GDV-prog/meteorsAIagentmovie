@@ -11,7 +11,7 @@ event loop. Обращения к локальной базе сериализу
 
 Нужны ключи в .env:
     TELEGRAM_BOT_TOKEN — токен от @BotFather (обязательно)
-    GROQ_API_KEY       — голова + роутер (обязательно)
+    LLM_API_KEY        — голова + роутер (обязательно)
     TAVILY_API_KEY     — web_search (опционально)
 И собранная база: uv run python indexer.py
 """
@@ -31,8 +31,8 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     sys.exit("Не задан TELEGRAM_BOT_TOKEN в .env — получи токен у @BotFather.")
-if not os.getenv("GROQ_API_KEY"):
-    sys.exit("Не задан GROQ_API_KEY в .env — без него голова не отвечает.")
+if not os.getenv("LLM_API_KEY"):
+    sys.exit("Не задан LLM_API_KEY в .env — без него голова не отвечает.")
 
 from telegram import Update  # noqa: E402
 from telegram.constants import ChatAction  # noqa: E402

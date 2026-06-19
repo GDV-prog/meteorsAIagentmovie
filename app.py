@@ -4,7 +4,7 @@
 Запуск:
     uv run python app.py
 
-Нужны ключи в .env: GROQ_API_KEY (голова+роутер), TAVILY_API_KEY (web_search).
+Нужны ключи в .env: LLM_API_KEY (голова+роутер), TAVILY_API_KEY (web_search).
 Перед первым запуском должна быть собрана база: uv run python indexer.py
 """
 
@@ -19,8 +19,8 @@ load_dotenv()
 
 
 def main() -> None:
-    if not os.getenv("GROQ_API_KEY"):
-        sys.exit("Не задан GROQ_API_KEY в .env — без него голова не отвечает.")
+    if not os.getenv("LLM_API_KEY"):
+        sys.exit("Не задан LLM_API_KEY в .env — без него голова не отвечает.")
 
     # импорт после проверки ключа (agent.py поднимает модели и базу)
     from agent import respond

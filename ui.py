@@ -8,7 +8,7 @@
     uv run python ui.py
 Откроется в браузере (http://127.0.0.1:7860).
 
-Нужны ключи в .env: GROQ_API_KEY (обязательно), TAVILY_API_KEY (для web_search).
+Нужны ключи в .env: LLM_API_KEY (обязательно), TAVILY_API_KEY (для web_search).
 И собранная база: uv run python indexer.py
 """
 
@@ -22,8 +22,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-if not os.getenv("GROQ_API_KEY"):
-    sys.exit("Не задан GROQ_API_KEY в .env — без него голова не отвечает.")
+if not os.getenv("LLM_API_KEY"):
+    sys.exit("Не задан LLM_API_KEY в .env — без него голова не отвечает.")
 
 import gradio as gr  # noqa: E402
 
